@@ -145,7 +145,7 @@ websock = webserver_init()
 poller.register(websock, uselect.POLLIN)
 
 while True:
-    ready = poller.poll(100)
+    ready = poller.ipoll(100)
     for event in ready:
         if event[0] == websock:
             webserver_serve(websock)
