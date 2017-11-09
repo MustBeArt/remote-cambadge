@@ -1,0 +1,50 @@
+Cambadge Televideo
+2017-11-08 ptw
+
+The Hackaday Superconference 2017 badge, or Cambadge, has an expansion connector and open source software, and encourages hardware add-ons. Here we consider an add-on that demonstrates remote wireless access to the camera images.
+
+There's no on-board wireless capability, so we have to add an external board on the expansion connector. The expansion connector has a fast serial port on it (two of them, in fact). It also has some GPIO and I2C and stuff.
+
+The Cambadge has a nice screen and enough buttons for a decent user interface. So pretty much all user interaction needs to be done on the badge side.
+
+If we put a MicroPython host with wifi capability (such as an Adafruit 8266 Huzzah board) on the badge's serial port, and write some Python code to expose the necessary functions, we can do it. The Huzzah can do simultaneous station and SoftAP operation, so it can implement the peer-to-peer network we need for badge-to-badge remote operation. This is all standard stuff, so there's nothing preventing an additional peer implementation on a computer or phone.
+
+Storage: there's an SD card on the badge, and a couple megabytes of file storage on the Huzzah. So we have some flexibility there.
+
+We need to spec out a set of features and a matching protocol for the async serial port that will be implementable quickly. We want a clean division of labor across that interface, and we also need for the badge side to fit easily into the existing badge software architecture.
+
+On the badge software side, we have a choice: we can create our own standalone application that follows the documented interface for apps on the badge and includes functions of the "camera" app provided with the badge, or we can try to tap into the normal function of the "camera" app and create remote access transparently.
+
+See file "notes on how the camera app works now.txt" for an overview of the shape of the existing camera app. TL;DR version: there's a cambuffer that's getting filled up with one frame of image data, a flag cam_newframe that's set whenever a frame becomes available. Button presses get processed and an AVI or BMP file gets written to the SD card. DMA is used to transfer data from the camera, one scan line at a time. There are places where code could be inserted to act on a single video scan line (in the low level driver code) or on a single frame or on a single capture (still or video file).
+
+There's also the browser app, which is what reads files from the badge's SD card. This could also be hooked for remote access. Currently it can only delete or "go" on a file. Looks like buttons 4 and 5 are unused in this mode. One of them could be "publish" or "transmit" or "hide", depending on how the remote operation works.
+
+=============
+
+Interaction Design
+
+There are many cool things it could do. We need to choose an easy subset that we can get done, and then maybe some stretch goals.
+
+Feature 1A: web server
+
+We'd deal only with files already completely written to the SD card. Directory info would be transferred to the Huzzah, which would format it into an HTML menu of images to choose from. When the web-browsing user clicks on a choice, the image would be first transferred from the badge's SD card to the Huzzah's local storage, then sent to the user. The nice thing about this is that any computer or mobile device could be the client without any special effort. This feature alone would be a success.
+
+To do this, the async protocol would need a one-way file transfer primitive, initiated by the Huzzah, with a variant that grabs a formatted directory listing (built on the badge and parsed on the Huzzah). That's about all!
+
+Feature 1B: web browser
+
+This would be a standalone app modeled on the existing (file) browser app, and would work only with servers on other badges (Feature 1A). The app would connect to a remote 1A server, and display any file on the remote badge just as if it were local. We'd have badge-to-badge transfer, a bit clunky but still a cool POC. For extra credit, keep the 1A server running while the 1B browser runs, to have the wifi version of peer-to-peer networking.
+
+To do this, the async protocol could, for symmetry, work about the same way. First it would do a file transfer of available remote badges, which the Huzzah would create by scanning for matching SSIDs in range. The next transfer would pass over a chosen SSID and get back a directory listing. Then a final transfer would pass over a filename and get back the file. The file would be stored temporarily on the SD card, and then displayed with the existing mechanisms.
+
+Feature 2: streaming video
+
+Instead of recording video to a file, or in addition, send the video frames over the WiFi to another badge for display and/or storage. This could be a push from the camera side or a pull from the display side. Details ... TBD.
+
+Feature 3: higher-quality video
+
+The badge designer says that writing to the SD card is the bottleneck for video frame rate on the badge. So, if serial and network performance permit, it might be possible to store higher quality video on a remote PC, or maybe display it (without ever storing it) on a remote badge.
+
+Feature 4: random IoT features
+
+Once we have WiFi there's no limit to the IoT nonsense we can perpetrate. 
