@@ -21,6 +21,7 @@ import os
 import socket
 import uio
 import ure
+import uselect
 
 
 hex_id = ''.join('{:02x}'.format(b) for b in machine.unique_id())
@@ -68,20 +69,25 @@ def dir_walk():
 
     return files
 
+def webserver_init():
+    """Initialize the web server"""
+    # Create our own WiFi network with a unique recognizable name
+    ap = network.WLAN(network.AP_IF)
+    ap.config(essid=web_essid, channel=web_channel)
+    ap.active(True)
 
-# Create our own WiFi network with a unique recognizable name
-ap = network.WLAN(network.AP_IF)
-ap.config(essid=web_essid, channel=web_channel)
-ap.active(True)
+    addr = socket.getaddrinfo('0.0.0.0', web_port)[0][-1]
+    s = socket.socket()
+    s.bind(addr)
+    s.listen(1)
 
-addr = socket.getaddrinfo('0.0.0.0', web_port)[0][-1]
-s = socket.socket()
-s.bind(addr)
-s.listen(1)
+    print('Web server listening on port', web_port)
 
-print('Web server listening on port', web_port)
+    return(s)
 
-while True:
+
+def webserver_serve(s):
+    """Process one query to the webserver"""
     cl, addr = s.accept()
     cl.setblocking(True)
     print('client connected from', addr)
@@ -132,3 +138,16 @@ while True:
 
     cl.sendall(response)       # blocks until it sends all of the response
     cl.close()
+
+
+poller = uselect.poll()
+websock = webserver_init()
+poller.register(websock, uselect.POLLIN)
+
+while True:
+    ready = poller.poll(100)
+    for event in ready:
+        if event[0] == websock:
+            webserver_serve(websock)
+        else:
+            print("Extra polled event %s" % event)
