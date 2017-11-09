@@ -1,0 +1,78 @@
+How the "camera" app works now:
+There's a little state machine.
+
+on camstart, it enables the camera
+
+on camrestart, it draws a menu (light on/off, mode bmp/avi, choice of 5 modes) and changes state to camlive. Enables grab and turns off LED1.
+
+on camlive, it handles button presses:
+	powerbut changes state to camquit
+	but1 goes to next mode, goes to camrestart
+	but2 toggles exposure lock (?), goes to camrestart
+	but3 turns off camfile, toggles video mode, goes to camrestart
+	but4 toggles LED1 (illuminator for the camera)
+	but5 goes to camavistart for video mode or camgrab for still mode
+Then if there's a new frame,
+	convert it to monochrome if that's turned on
+	display the image with dispimage(), pointing to cambuffer for image data
+
+on avierror,
+	it waits for any button press then goes to camrestart
+
+on camavistart,
+	it checks for an SD card, doing nothing if there isn't one
+	cd to /CAMVIDEO, creating it if necessary (buggy code here)
+	tries opening files CAM0000, CAM0001, CAM0002 ... until it finds one that doesn't already exist. (could be smarter!)
+	opens the next filename for write (fptr is the one global file handle)
+	cd back to the root directory
+	sets up a timer
+	sets up avi capture parameters (global variables)
+	calls startavi()
+	enables grab
+	goes to waitavi
+
+on waitavi,
+	if a button is pressed (and there's been at least one frame),
+		finishavi() and wrap up the AVI file and close it.
+		go to camrestart
+	otherwise, if there's a new frame available,
+		disable grab
+		convert to monochrome if that's enabled
+		display the image from the buffer
+		write a chunk to the AVI file
+		update frame and seconds counter
+		turn off the timer (?)
+		enable grab (?)
+		continue in waitavi
+		
+on camgrab,
+	check for an SD card, doing nothing if there isn't one
+	disable grab
+	cd to /CAMERA, creating it if necessary
+	tries opening files CAM0000, CAM0001, CAM0002 ... until it finds one that doesn't already exist. (could be smarter!)
+	convert image if needed
+	opens the next filename for write (fptr is the one global file handle)
+	write out the BMP header
+	write out the buffer
+	close the file (go to camwait on error)
+
+on camwait,
+	it waits for any button press then goes to camlive and enables grab
+
+on camquit,
+	it goes to camstart, disables the camera, and returns from the app.
+
+
+Outside the camera app, the camera drivers (in hardware.c) do all the lower-level access:
+
+cam_grabenable() sets up access to cambuffer and enables the vertical sync interrupt. cam_grab_disable() just turns off the vertical sync interrupt and busy-waits for any in-process grab to finish.
+
+Meanwhile, the vertical sync interrupt handler (in interrupts.c) sets up a DMA transfer from the camera, and enables the horizontal sync interrupt.
+
+The horizontal sync interrupt handler (in interrupts.c) does line skipping if needed, or else fires off a DMA transfer of one line and then enables the DMA complete interrupt.
+
+The DMA complete interrupt handler (in interrupts.c) does buffer bookkeeping between lines, and disables the horizontal sync interrupt after the last line of a frame has been transferred.
+
+
+Side note: the camera app is the only place in the badge code where the SD card filesystem is written to. The browser app is almost the only place where the SD card files are read -- the init code also reads "splash.avi" for bling on startup. AVI files are handled with openavi() in fileformats.c, which parses the AVI header into a bunch of global variables, and then showavi() is called repeatedly to read in a frame's worth and do a dispimage() on it.
+BMP files are read with loadbmp(), which does both operations, treating the BMP file as a sort of single-frame AVI.
