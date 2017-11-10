@@ -18,11 +18,13 @@ available remotely via WiFi.
 import machine
 import network
 import os
-import socket
+import ubinascii
 import uio
 import ure
 import uselect
+import usocket
 
+import crc16
 
 hex_id = ''.join('{:02x}'.format(b) for b in machine.unique_id())
 
@@ -69,6 +71,79 @@ def dir_walk():
 
     return files
 
+
+def serial_init():
+    """Initialize the serial port to the badge"""
+    uart = machine.UART(0)
+
+    return(uart)
+
+
+frame_flag = b'\x02'
+rx_inframe = False
+rx_frame_buffer = b''
+
+
+def serial_process_rx_message(msg):
+    """Dummy"""
+    print("Valid message! %s" % msg)
+
+
+def serial_process_rx_frame():
+    global rx_frame_buffer
+    if len(rx_frame_buffer) < 5:
+        print("Short frame! %s" % rx_frame_buffer)
+    else:
+        message = rx_frame_buffer[0:-4]
+        try:
+            crc = int(rx_frame_buffer[-4:], 16)
+        except ValueError:
+            crc = -1
+        correct_crc = crc16.crc16xmodem(message)
+        if crc != correct_crc:
+            print("Bad CRC! %s should be %04x"
+                  % (rx_frame_buffer, correct_crc))
+        else:
+            serial_process_rx_message(message)
+    rx_frame_buffer = b''
+
+
+def serial_process_rx_flag():
+    global rx_inframe
+    if not rx_inframe:
+        rx_inframe = True
+    elif len(rx_frame_buffer) > 0:
+        serial_process_rx_frame()
+        rx_inframe = False
+    # else we received extra back-to-back flags; ignore that.
+
+
+def serial_process_rx_data(data):
+    global rx_frame_buffer
+    if not rx_inframe:
+        print("Stray data received: %s" % data)
+    else:
+        rx_frame_buffer += data
+
+
+def serial_process_rx(uart):
+    """Process some incoming data from the badge"""
+    read = uart.read()
+    # print("Rcvd %d from uart: %s" % (len(read), read))
+    while len(read) > 0:
+        flag_index = read.find(frame_flag)
+        if flag_index == -1:
+            serial_process_rx_data(read)
+            read = ''
+        elif flag_index == 0:
+            serial_process_rx_flag()
+            read = read[1:]
+        else:
+            serial_process_rx_data(read[0:flag_index])
+            serial_process_rx_flag()
+            read = read[flag_index+1:]
+
+
 def webserver_init():
     """Initialize the web server"""
     # Create our own WiFi network with a unique recognizable name
@@ -76,8 +151,8 @@ def webserver_init():
     ap.config(essid=web_essid, channel=web_channel)
     ap.active(True)
 
-    addr = socket.getaddrinfo('0.0.0.0', web_port)[0][-1]
-    s = socket.socket()
+    addr = usocket.getaddrinfo('0.0.0.0', web_port)[0][-1]
+    s = usocket.socket()
     s.bind(addr)
     s.listen(1)
 
@@ -141,6 +216,10 @@ def webserver_serve(s):
 
 
 poller = uselect.poll()
+
+badge = serial_init()
+poller.register(badge, uselect.POLLIN)
+
 websock = webserver_init()
 poller.register(websock, uselect.POLLIN)
 
@@ -149,5 +228,10 @@ while True:
     for event in ready:
         if event[0] == websock:
             webserver_serve(websock)
+        elif event[0] == badge:
+            if event[1] & uselect.POLLIN:
+                serial_process_rx(badge)
+            # if event[1] & uselect.POLLOUT:
+            #     serial_process_tx(badge)
         else:
             print("Extra polled event %s" % event)
