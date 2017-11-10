@@ -1,0 +1,49 @@
+Serial Port Thoughts on 8266 and Remote Cambadge
+2017-11-09 ptw
+
+So, the 8266 has two UARTs, but not really. UART0 is the one usually used, and by default it also gets a blast of system debug info at a non-standard baud rate at system startup. The standard MicroPython REPL is there, and any print calls from MicroPython go there too. UART1, on the other hand, is TX-only, because its RX pin is shared with a vital SPI pin used to communicate with the flash memory.
+
+It seems to be the case that some operations will cause unwanted print calls, so stuff goes out the UART0 pins that we couldn't predict.
+
+I think this means we need to have a somewhat robust packet protocol between the badge and the 8266, just so the badge can reliably ignore the random other crap that's present on that pin. We also need to be able to use the port for debug purposes, so the protocol should be something that doesn't automatically screw up the simple terminal emulator we'll use for debug. Also, routine output for debug shouldn't often mess up the protocol.
+
+The protocol needs binary transparency, because we're shipping AVI and BMP data. We could encode and decode everything in hex or base64, which would be friendly to the terminal, or we could do byte escaping like KISS. There's a built-in ubinascii module that does hex or base64. C code is also available, for the badge side. 
+
+On the other hand, we'd like for the protocol to be human-readable, because that will make it easier to debug.
+
+What are the protocol operations?
+
+Badge asks 8266 to identify, 8266 responds with a constant signature and its unique ID (MAC address).
+
+Badge asks 8266 for a scan of other badges, 8266 responds with a list of IDs (possibly empty).
+
+Badge asks 8266 for a directory of files on a particular badge, 8266 responds with a list of filenames, possibly empty (or an error).
+
+Badge asks 8266 for the contents of a particular file on a particular badge, 8266 responds with the data (or an error). This data could be big, so it needs to be packetized into reasonable length packets.
+
+8266 asks badge for a directory of files, badge responds with a list of filenames (possibly empty).
+
+8266 asks badge for the contents of a particular file, badge responds with the data, packetized.
+
+etc.
+
+What does the protocol look like?
+
+<frame mark>	-- a single non-printable ASCII byte
+<command>		-- a single printable ASCII character, mnemonic
+<command-specific data>		-- all printable
+<crc>			-- 2 bytes, encoded in hex
+<frame mark>
+
+I = identify, no payload from badge
+I = identity, "Cambadge ", decimal version code, 8-byte hex unique ID
+Example:
+I Cambadge 1 8f357900 abcd
+
+S = scan, no payload from badge
+S = scan results, decimal number of badges found, N*8 bytes of ID info
+Example:
+S 3 8f357900 8f357901 8f357902 abcd
+
+D = directory, 8-byte hex ID
+D = directory results, 
