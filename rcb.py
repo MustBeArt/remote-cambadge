@@ -72,16 +72,37 @@ def dir_walk():
     return files
 
 
-def serial_init():
-    """Initialize the serial port to the badge"""
-    uart = machine.UART(0)
-
-    return(uart)
-
-
+# Serial Processing
+uart = None
 frame_flag = b'\x02'
 rx_inframe = False
 rx_frame_buffer = b''
+
+
+def serial_init():
+    """Initialize the serial port to the badge
+
+    Note that the serial port used here is ALSO used by the
+    system console and the MicroPython REPL, so everything we
+    print, plus REPL overhead if running under the REPL, plus
+    anything a library might print, is mixed in with the
+    messages being sent to the badge. We mitigate this problem
+    by wrapping the badge messages in a simple framing and
+    message CRC format, with the payload encoded printably
+    to avoid screwing up a terminal that might be monitoring
+    the data stream.
+    """
+    global uart
+    uart = machine.UART(0)
+
+
+def serial_transmit_message(msg):
+    """Frame up and send a message to the badge
+
+    The message should contain only printable characters.
+    """
+    crc = '{0:04x}'.format(crc16.crc16xmodem(msg)).encode('ascii')
+    uart.send(frame_flag + msg + crc + frame_flag)
 
 
 def serial_process_rx_message(msg):
@@ -217,8 +238,8 @@ def webserver_serve(s):
 
 poller = uselect.poll()
 
-badge = serial_init()
-poller.register(badge, uselect.POLLIN)
+serial_init()
+poller.register(uart, uselect.POLLIN)
 
 websock = webserver_init()
 poller.register(websock, uselect.POLLIN)
@@ -228,10 +249,10 @@ while True:
     for event in ready:
         if event[0] == websock:
             webserver_serve(websock)
-        elif event[0] == badge:
+        elif event[0] == uart:
             if event[1] & uselect.POLLIN:
-                serial_process_rx(badge)
+                serial_process_rx(uart)
             # if event[1] & uselect.POLLOUT:
-            #     serial_process_tx(badge)
+            #     serial_process_tx(uart)
         else:
             print("Extra polled event %s" % event)
